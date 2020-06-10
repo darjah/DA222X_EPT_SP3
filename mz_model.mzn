@@ -1,6 +1,3 @@
-%constraint rbbs[1] = RBB44_1D;
-%constraint radios[1] = KRC118702R1;
-
 include "table.mzn";
 include "alldifferent_except_0.mzn";
 
