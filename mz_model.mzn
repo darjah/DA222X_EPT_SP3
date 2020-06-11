@@ -3,7 +3,7 @@ include "alldifferent_except_0.mzn";
 
 % tables
 array[int, int] of int: node_rbb_swrev;
-array[int, int] of int: rbb_ru;
+array[int, int] of int: rbb_ru_swrev;
 array[int, int] of int: rbb_capability;
 array[int, int] of int: rbb_capability_nr_ports;
 array[int, int] of int: rbb_compatibility;
@@ -107,7 +107,7 @@ constraint forall( i in 1..max_rbbs_in_sol, j in 1..max_radios_in_rbb )
 
 % compatibility check: each radio in each rbb is compatible with that rbb
 constraint forall(i in 1..max_rbbs_in_sol, j in 1..max_radios_in_rbb) 
-                  (radios_in_rbb[i,j] > 0 -> table([rbbs[i], radios[j]], rbb_ru));
+                  (radios_in_rbb[i,j] > 0 -> table([rbbs[i], radios[j], swrev], rbb_ru_swrev));
 
 % compatibility check: all radios in each rbb is ordered according to table of valid combinations and specific order
 constraint forall(i in 1..nr_selected_rbbs) 
@@ -127,17 +127,33 @@ constraint forall( r1 in 1..max_rbbs_in_sol, r2 in 1..max_rbbs_in_sol where r1 !
                  ( exists( i in 1..max_radios_in_sol ) ( ( radio_index_in_rbb[r1, i] > 0 /\ radio_index_in_rbb[r2, i] > 0 ) -> 
                    table( [rbb[r1], radio_index_in_rbb[r1, i], rbb[r2], radio_index_in_rbb[r2, i]], rbb_compatibility ) ) );
 
-% 
+% each carrier must be allocated to (exactly) one rbb
 constraint forall ( c in CarrierSet )( carrier_rbb_allocation[c] != 0 );
+
+% no more connections to rbbs than we have carriers
 constraint forall ( c in 1..max_carriers_in_sol where c > max(CarrierSet) )( carrier_rbb_allocation[c] = 0 );
 
-constraint forall ( c in CarrierSet ) 
-                  ( sum ( i in 1..8 )( carrier_tx_allocation[c, carrier_rbb_allocation[c], i] ) = carriers[c, NR_TX]);
+% each rbb in the solution must have at least one carrier
+constraint forall ( r in 1..max_rbbs_in_sol where rbbs[r] > 0 ) ( exists( c in CarrierSet ) ( carrier_rbb_allocation[c] = r ) );
 
+% number of tx connections must be equal to NR_TX branches specified on the carrier
 constraint forall ( c in CarrierSet ) 
-                  ( sum ( i in 1..8 )( carrier_rx_allocation[c, carrier_rbb_allocation[c], i] ) = carriers[c, NR_RX]);
+                  ( sum ( i in 1..8 )( carrier_tx_allocation[c, carrier_rbb_allocation[c], i] ) = carriers[c, NR_TX] );
+% number of rx connections must be equal to NR_RX branches specified on the carrier
+constraint forall ( c in CarrierSet ) 
+                  ( sum ( i in 1..8 )( carrier_rx_allocation[c, carrier_rbb_allocation[c], i] ) = carriers[c, NR_RX] );
 
-constraint forall (c in CarrierSet, p in 1..8)
+% each carrier is connected to a rbb that is connected to a radio that support those carrier demands
+constraint forall( c in CarrierSet )
+  ( let { var int: rbb_ru_idx, 
+          var int: min_sw_rev } in 
+  table( 
+      [radios[radios_in_rbb[carrier_rbb_allocation[c], rbb_ru_idx]], carriers[c, FREQ_BAND], carriers[c, BW], min_sw_rev],
+      ru_fb_bw_swrev ) /\
+  swrev >= min_sw_rev );
+                                    
+% for each carrier, connected to an rbb, that port on that rbb must be tx/rx compatible 
+constraint forall ( c in CarrierSet, p in 1..8 )
 ( let { var int: tx_capable,
         var int: rx_capable }
   in table( [rbbs[carrier_rbb_allocation[c]], p, tx_capable, rx_capable], rbb_capability ) /\
@@ -145,10 +161,8 @@ constraint forall (c in CarrierSet, p in 1..8)
      carrier_rx_allocation[c, carrier_rbb_allocation[c], p] <= rx_capable
 );
 
-constraint forall( c in CarrierSet where carriers[c, BW] != BW_NONE)
-  (exists (i in 1..max_radios_in_rbb) ( table([radios[radios_in_rbb[carrier_rbb_allocation[c], i]], carriers[c, FREQ_BAND], carriers[c, BW], swrev], ru_fb_bw_swrev) ));
 /*---------------------------------------------------------------------------------------*/
-              
+
 solve satisfy;
 
 output["swrev = \(swrev)\n",
@@ -172,7 +186,8 @@ output["swrev = \(swrev)\n",
        [if j = 1 then "|" else "" endif ++ 
           if j < max_radios_in_sol then show(radio_index_in_rbb[i, j]) ++ ", " else show(radio_index_in_rbb[i, j]) ++ "\n" endif 
              | i in 1..max_rbbs_in_sol, j in 1..max_radios_in_sol] ++ ["]\n"] ++
-       [if i = 1 then "carrier \(c), \(carrier_rbb_allocation[c]) = \n " ++ "tx/rx allocation = [" else "" endif ++
+       [if i = 1 then "c\(c), rbb\(carrier_rbb_allocation[c]) = \n " ++ "tx/rx allocation = [" else "" endif ++
         show(carrier_tx_allocation[c, carrier_rbb_allocation[c], i ]) ++ 
         show(carrier_rx_allocation[c, carrier_rbb_allocation[c], i ]) ++
         if i < 8 then ", " else "]\n" endif | c in CarrierSet, i in 1..8] ++ ["\n"];
+        
