@@ -1,29 +1,31 @@
 include "table.mzn";
 include "alldifferent_except_0.mzn";
 include "decreasing.mzn";
-include "inverse_set.mzn";
 
 % project files
 include "mz_data.dzn";
 include "mz_testcase.dzn";
 
 % tables
+array[int, int] of int: ctc_ct_columns;
+array[int, int] of int: node_ru_swrev;
 array[int, int] of int: node_rbb_swrev;
 array[int, int] of int: rbb_capability;
 array[int, int] of int: rbb_capability_nr_ports;
 array[int, int] of int: rbb_compatibility;
-array[int, int] of int: rbb_ru_swrev;
+array[int, int] of int: rbb_ru_rat_swrev;
+array[int, int] of int: rbb_ru_swrev; %!!!NA?!!!
 array[int, int] of int: rbb_topology;
 array[int, int] of int: ru_combinations;
+array[int, int] of int: ru_combinations2;
 array[int, int] of int: ru_fb;
-array[int, int] of int: ru_pnhwrev;
+array[int, int] of int: ru_data;
 array[int, int] of int: ru_fb_bw_swrev;
 array[int, int] of int: ru_fb_ctc_allowed;
 array[int, int] of int: ru_fb_ctc_data;
-array[int, int] of int: ru_fb_pwrm_pp_pwr;
+array[int, int] of int: ru_fb_pm_pwr;
+array[int, int] of int: ru_fbs_pms_pwr;
 array[int, int] of int: ru_port_pattern;
-array[int, int] of int: ctc_ct_columns;
-array[int, int] of int: rbb_ru_rat_swrev;
 
 % predefined parameters
 int: max_nodes_in_sol = 8;
@@ -85,7 +87,6 @@ array[RbbSet] of var rbb0: rbbs;
 /* radios:
 [ _, _, _, _, _, _, _, _,] */
 array[RadioSet] of var ru0: radios;
-array[RadioSet] of var ru_type0: radios_ru_type;
 /* rbbs_in_nodes:
 [ _, _, _, _, _, _, _, _,] */
 array[RbbSet] of var 0..max_nodes_in_sol: rbbs_in_nodes;
@@ -103,6 +104,9 @@ array[RbbSet, RadioSet] of var 0..max_radios_in_rbb: radio_index_in_rbb;
 /* carrier_rbb_allocation:
 [ _, _, .., _,] */ 
 array[CarrierSet] of var rbb0: carrier_rbb_allocation;
+
+%carrier alloc to rbb rus
+array[CarrierSet, RbbSet, RadioSet] of var 0..1: carrier_rbb_radio;
 
 /* carrier_tx_allocation:
 [|[| _, _, _, _, _, _, _, _,
@@ -125,7 +129,7 @@ array[CarrierSet, RadioSet, PortSet] of var 0..1: carrier_rx_allocation;
 [ _, _, _, _, _, _] */
 array[RadioSet] of var ctc0: radio_ctc;
 
-%array[RadioSet, 1..3] of var freq_band0: radio_freq_bands;
+%pwr_mode and port pattern / freq_band
 array[RadioSet, FreqSet] of var pwr_mode0: radio_pwr_modes;
 array[RadioSet, FreqSet] of var port_pattern0: radio_port_patterns;
 
@@ -137,19 +141,8 @@ array[RadioSet, FreqSet] of var port_pattern0: radio_port_patterns;
  |_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _
  |_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _] */
 array[RadioSet, 1..max(carrier_type)] of var 0..99: radio_carrier_types;
+array[RadioSet, 1..max(freq_band)] of var 0..99: radio_freq_bands;
 
-%carrier alloc to rbb rus
-array[CarrierSet, RbbSet, RadioSet] of var 0..1: carrier_rbb_radio;
-
-/* radio_carrier_types:
-[|_, _, _, _, _, _, _, _, _,
- |_, _, _, _, _, _, _, _, _,
- |_, _, _, _, _, _, _, _, _,
- |_, _, _, _, _, _, _, _, _,
- |_, _, _, _, _, _, _, _, _,
- |_, _, _, _, _, _, _, _, _,
- |_, _, _, _, _, _, _, _, _,
- |_, _, _, _, _, _, _, _, _]*/
 %array[RbbSet, 1..max(carrier_rat)] of var 0..99: rbb_carrier_rats;
 /*---------------------------------------------------------------------------------------*/
 constraint decreasing(radios);
@@ -174,7 +167,13 @@ constraint forall( i in RbbSet )
                  ( let { var 0..max(swr): from_swrev } in
                  ( table( [ if rbbs_in_nodes[i] > 0 then nodes[rbbs_in_nodes[i]] else 0 endif, rbbs[i], from_swrev], node_rbb_swrev) /\
                    from_swrev <= swrev ) );
-
+                   
+% compatibility check: each radio in a rbb is compatible with the connected node
+constraint forall( i in RbbSet, j in RbbRadioSet )
+                 ( let { var 0..max(swr): from_swrev } in
+                 ( table( [ rbbs_in_nodes[i], radios_in_rbb[i, j], from_swrev], node_ru_swrev) /\
+                   from_swrev <= swrev ) );
+                   
 % one rbb cannot be connected to the same radio (idx) more than once
 constraint forall( i in RbbSet ) 
                  ( alldifferent_except_0( [ radios_in_rbb[i, j] | j in RbbRadioSet ] ) );
@@ -193,24 +192,20 @@ constraint forall( r in RadioSet where radios[r] != 0 )
 constraint forall( i in RbbSet, j in RbbRadioSet ) 
                  ( exists( r in RadioSet ) ( radios_in_rbb[i,j] = r \/ radios_in_rbb[i,j] = 0 )); 
 %-------
-
-% compatibility check: each radio in each rbb is compatible with that rbb
-constraint forall( i in RbbSet, j in RbbRadioSet) 
-                 ( let { var int: from_swrev } in
-                 ( radios_in_rbb[i,j] > 0 -> table([rbbs[i], radios[j], from_swrev], rbb_ru_swrev) /\
-                  from_swrev <= swrev ) );
-
-% compatibility check: all radios in each rbb is ordered according to table of valid combinations and specific order
+% compatibility check: all radios in each rbb is according to valid combinations and specific order
+/*constraint forall( i in RbbSet ) 
+                 ( table([if radios_in_rbb[i,j] = 0 then 0 
+                          else radios[radios_in_rbb[i,j]] endif | j in RbbRadioSet], ru_combinations));*/
 constraint forall( i in RbbSet ) 
                  ( table([if radios_in_rbb[i,j] = 0 then 0 
-                          else radios[radios_in_rbb[i,j]] endif | j in RbbRadioSet], ru_combinations));
-
+                          else radios[radios_in_rbb[i,j]] endif | j in RbbRadioSet], ru_combinations2));
 %inverse_set
 constraint forall( i in RbbSet, j in RbbRadioSet ) 
                  ( radios_in_rbb[i, j] > 0 -> radio_index_in_rbb[i, radios_in_rbb[i, j]] = j );
                 
 constraint forall( i in RbbSet, j in RadioSet) 
                  ( radio_index_in_rbb[i, j] > 0 -> radios_in_rbb[i, radio_index_in_rbb[i, j]] = j);
+
 /* "modelkiller"
 svårt att prop med exists, lika så med -> TA BORT DESSA 
 "exists = A OR B OR C... enda gången man kan prop exists det är om alla OR uttryck utom ett är false" 
@@ -224,9 +219,9 @@ constraint forall( r1 in RbbSet, r2 in RbbSet where r1 != r2)
                  ( exists( i in RadioSet ) ( ( radio_index_in_rbb[r1, i] > 0 /\ radio_index_in_rbb[r2, i] > 0 ) -> 
                    table( [rbbs[r1], radio_index_in_rbb[r1, i], rbbs[r2], radio_index_in_rbb[r2, i]], rbb_compatibility ) ) );
 
-constraint forall( i in RadioSet ) 
+/*constraint forall( i in RadioSet ) 
                  ( if i <= nr_selected_radios then radio_ctc[i] > 0 else radio_ctc[i] = 0 endif );
-/*constraint forall( i in RadioSet, f in FreqSet ) 
+constraint forall( i in RadioSet, f in FreqSet ) 
                  ( if i <= nr_selected_radios then radio_pwr_modes[i, f] > 0 else radio_pwr_modes[i, f] = 0 endif );*/
 
 % each carrier must be allocated to (exactly) one rbb
@@ -246,31 +241,42 @@ constraint forall( c in CarrierSet )
 
 % sum all allocated carrier branches' carrier types on each radio
 constraint forall( r in RadioSet, ct in 1..max(carrier_type ) ) 
-                 ( radio_carrier_types[r, ct] = sum( c in CarrierSet, p in PortSet where carriers[c, CARRIER_TYPE] = ct ) ( carrier_tx_allocation[c,r,p] + carrier_rx_allocation[c,r,p] ) );
-
+                 ( radio_carrier_types[r, ct] = 
+                     sum( c in CarrierSet, p in PortSet where carriers[c, CARRIER_TYPE] = ct ) 
+                        ( carrier_tx_allocation[c,r,p] + carrier_rx_allocation[c,r,p] ) );
+% sum all allocated carrier branches' freq bands on each radio
+constraint forall( r in RadioSet, f in 1..max(freq_band ) ) 
+                 ( radio_freq_bands[r, f] = 
+                     sum( c in CarrierSet, p in PortSet where carriers[c, FREQ_BAND] = f ) 
+                        ( carrier_tx_allocation[c,r,p] ) );
+                 
 % sum all allocated carriers' carrier rats on each rbb
 /*constraint forall( r in RbbSet, cr in 1..max(carrier_rat) )
-                 ( rbb_carrier_rats[r, carrier_rat[cr]] = sum( c in CarrierSet where carriers[c, CARRIER_RAT] = cr) ( carrier_rbb_allocation[c] = r ) );*/
-
-% lookup ru type from pnhwrev
-constraint forall( r in RadioSet ) 
-                 ( table( [radios[r], radios_ru_type[r]], ru_pnhwrev ) );
+                 ( rbb_carrier_rats[r, carrier_rat[cr]] = 
+                   sum( c in CarrierSet where carriers[c, CARRIER_RAT] = cr) ( carrier_rbb_allocation[c] = r ) );*/
 
 % count carriers allocated on rbb ru
 constraint forall( c in CarrierSet, rbb in RbbSet, ru in RadioSet )
-                 ( carrier_rbb_radio[c, rbb, ru] = bool2int( carrier_rbb_allocation[c] = rbb /\ 
-                                                             sum( p in PortSet ) ( carrier_tx_allocation[c,ru,p] + carrier_rx_allocation[c,ru,p] ) > 0 ) );
+                 ( carrier_rbb_radio[c, rbb, ru] = 
+                     bool2int( carrier_rbb_allocation[c] = rbb /\ 
+                               sum( p in PortSet ) ( carrier_tx_allocation[c,ru,p] + carrier_rx_allocation[c,ru,p] ) > 0 ) );
 
+% compatibility check: each radio in each rbb is compatible with that rbb !!!NA?!!!
+constraint forall( i in RbbSet, j in RbbRadioSet) 
+                 ( let { var int: from_swrev } in
+                 ( radios_in_rbb[i,j] > 0 -> table([rbbs[i], radios[j], from_swrev], rbb_ru_swrev) /\
+                  from_swrev <= swrev ) );
+                  
 % sw compatibility for carrier RATs allocated on rbb rus
 constraint forall( c in CarrierSet, r in RadioSet where carrier_rbb_radio[c, carrier_rbb_allocation[c], r] = 1 ) 
                  ( let { var swr: from_swrev } in 
-                 ( table( [ rbbs[carrier_rbb_allocation[c]], radios_ru_type[r], carriers[c, CARRIER_RAT], from_swrev ], rbb_ru_rat_swrev ) /\
+                 ( table( [ rbbs[carrier_rbb_allocation[c]], ru_data[radios[r], RU_TYPE], carriers[c, CARRIER_RAT], from_swrev ],               
+                            rbb_ru_rat_swrev ) /\ 
                    from_swrev <= swrev ) );
 
 % for each carrier, connected to an rbb, that port on that rbb must be tx/rx compatible 
-/*rbb_capability/freqBand måste ha alla portar för alla freq_band 
-B2 på alla portar men bara tx/rx på första 4, samma för ru_port_pattern MED 1-8 idx för portar*/
-
+% for allocation: carrier fb and tx/rx demands must be supported by radio specifications and in accordance to ru port pattern
+% combination of carriers' carrier types must be supported by ru
 constraint forall( c in CarrierSet, p in PortSet )
       ( let { var 0..1:              tx_capable,
               var 0..1:              rx_capable,
@@ -305,6 +311,7 @@ constraint forall( c in CarrierSet, p in PortSet )
             radio_ctc[radios_in_rbb[carrier_rbb_allocation[c], ru_idx]], 
             min_sw_rev2], ru_fb_ctc_allowed) ) );
 
+% allocated carrier types must within the available CTCs
 set of int: tmp = {0, 99};
 constraint forall( r in RadioSet ) (
     let { var tmp: ct_W_qty,
@@ -360,28 +367,208 @@ constraint forall( r in RadioSet ) (
                   radio_carrier_types[r,ct_C] <= ct_C_qty /\
                   radio_carrier_types[r,ct_EFDD] <= ct_EFDD_qty ) );
 
-/*constraint forall( r in RadioSet, f in FreqSet ) 
-                 ( let { var int: c1 } in 
-                 ( sum( p in PortSet, c in CarrierSet where c = c1) 
-                      ( carrier_tx_allocation[c, r, p] = 0 ) = 0 /\ carriers[c1, FREQ_BAND] = f \/  carriers[c1, FREQ_BAND] != f ) -> radio_pwr_modes[r, f] = 0 );*/
-
 % check pwr restriction per radio port
 constraint forall( r in RadioSet, f in FreqSet, p in PortSet)
                  ( let { var 0..120: port_pwr, 
                          var 0..400: radio_pwr} in 
-                 ( table( [radios[r], f, radio_port_patterns[r, f], radio_pwr_modes[r, f], port_pwr, radio_pwr], ru_fb_pwrm_pp_pwr ) /\
-                   sum( c in CarrierSet where carriers[c, FREQ_BAND] = f ) ( carrier_tx_allocation[c, r, p] * (carriers[c, OUT_PWR]/carriers[c, NR_TX]) ) <= port_pwr ) );
+                 ( table( [radios[r], f, radio_port_patterns[r, f], radio_pwr_modes[r, f], port_pwr, radio_pwr], ru_fb_pm_pwr ) /\
+                   sum( c in CarrierSet where carriers[c, FREQ_BAND] = f ) 
+                      ( carrier_tx_allocation[c, r, p] * (carriers[c, OUT_PWR]/carriers[c, NR_TX]) ) <= port_pwr ) );
                                       
-% check pwr restriction on whole radio      
+% check pwr restriction on whole radio, for each combination of frequency bands (single to triple band)  
 constraint forall( r in RadioSet, f in FreqSet )
                  ( let { var 0..120: port_pwr, 
                          var 0..400: radio_pwr} in 
-                 ( table( [radios[r], f, radio_port_patterns[r, f], radio_pwr_modes[r, f], port_pwr, radio_pwr], ru_fb_pwrm_pp_pwr ) /\
-                   sum( p in PortSet, c in CarrierSet where carriers[c, FREQ_BAND] = f ) ( carrier_tx_allocation[c, r, p] * (carriers[c, OUT_PWR]/carriers[c, NR_TX]) ) <= radio_pwr ) );
+                 ( table( [radios[r], f, radio_port_patterns[r, f], radio_pwr_modes[r, f], port_pwr, radio_pwr], ru_fb_pm_pwr ) /\
+                   sum( p in PortSet, c in CarrierSet where carriers[c, FREQ_BAND] = f ) 
+                      ( carrier_tx_allocation[c, r, p] * (carriers[c, OUT_PWR]/carriers[c, NR_TX]) ) <= radio_pwr ) );
 
+enum RADIO_PARAMS = {RU_TYPE,FB1,FB2,FB3};
+constraint forall( r in RadioSet where radios[r] != 0 /\ radio_freq_bands[r, ru_data[radios[r], FB1]] > 0 )
+                 ( let { var 0..120: port_pwr,
+                         var 0..400: radio_pwr } in 
+                 ( table( [radios[r], ru_data[radios[r], FB1], 0, 0, 
+                           radio_pwr_modes[r, ru_data[radios[r], FB1]], 0, 0, 
+                           port_pwr, radio_pwr], ru_fbs_pms_pwr ) /\
+                   sum( p in PortSet, c in CarrierSet where carriers[c, FREQ_BAND] = ru_data[radios[r], FB1] ) 
+                      ( carrier_tx_allocation[c, r, p] * (carriers[c, OUT_PWR]/carriers[c, NR_TX]) ) <= radio_pwr ) );
+
+constraint forall( r in RadioSet where radios[r] != 0 /\ radio_freq_bands[r, ru_data[radios[r], FB2]] > 0 )
+                 ( let { var 0..120: port_pwr,
+                         var 0..400: radio_pwr } in 
+                 ( table( [radios[r], 0, ru_data[radios[r], FB2], 0, 
+                           0, radio_pwr_modes[r, ru_data[radios[r], FB2]], 0, 
+                           port_pwr, radio_pwr], ru_fbs_pms_pwr ) /\
+                   sum( p in PortSet, c in CarrierSet where carriers[c, FREQ_BAND] = ru_data[radios[r], FB2] ) 
+                      ( carrier_tx_allocation[c, r, p] * (carriers[c, OUT_PWR]/carriers[c, NR_TX]) ) <= radio_pwr ) );
+
+constraint forall( r in RadioSet where radios[r] != 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB3]] > 0 )
+                 ( let { var 0..120: port_pwr,
+                         var 0..400: radio_pwr } in 
+                 ( table( [radios[r], 0, 0, ru_data[radios[r], FB3],
+                           0, 0, radio_pwr_modes[r, ru_data[radios[r], FB3]], 
+                           port_pwr, radio_pwr], ru_fbs_pms_pwr ) /\
+                   sum( p in PortSet, c in CarrierSet where carriers[c, FREQ_BAND] = ru_data[radios[r], FB3] ) 
+                      ( carrier_tx_allocation[c, r, p] * (carriers[c, OUT_PWR]/carriers[c, NR_TX]) ) <= radio_pwr ) );  
+
+constraint forall( r in RadioSet where radios[r] != 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB1]] > 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB2]] > 0 )
+                 ( let { var 0..120: port_pwr,
+                         var 0..400: radio_pwr } in 
+                 ( table( [radios[r], ru_data[radios[r], FB1], ru_data[radios[r], FB2], 0,
+                           radio_pwr_modes[r, ru_data[radios[r], FB1]], radio_pwr_modes[r, ru_data[radios[r], FB2]], 0, 
+                           port_pwr, radio_pwr], ru_fbs_pms_pwr ) /\
+                   sum( p in PortSet, c in CarrierSet where 
+                        carriers[c, FREQ_BAND] = ru_data[radios[r], FB1] \/ 
+                        carriers[c, FREQ_BAND] = ru_data[radios[r], FB2] ) 
+                      ( carrier_tx_allocation[c, r, p] * (carriers[c, OUT_PWR]/carriers[c, NR_TX]) ) <= radio_pwr ) ); 
+                    
+constraint forall( r in RadioSet where radios[r] != 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB1]] > 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB3]] > 0 )
+                 ( let { var 0..120: port_pwr,
+                         var 0..400: radio_pwr } in 
+                 ( table( [radios[r], ru_data[radios[r], FB1], 0, ru_data[radios[r], FB3],
+                           radio_pwr_modes[r, ru_data[radios[r], FB1]], 0, radio_pwr_modes[r, ru_data[radios[r], FB3]], 
+                           port_pwr, radio_pwr], ru_fbs_pms_pwr ) /\
+                   sum( p in PortSet, c in CarrierSet where 
+                        carriers[c, FREQ_BAND] = ru_data[radios[r], FB1] \/ 
+                        carriers[c, FREQ_BAND] = ru_data[radios[r], FB3]) 
+                      ( carrier_tx_allocation[c, r, p] * (carriers[c, OUT_PWR]/carriers[c, NR_TX]) ) <= radio_pwr ) );
+                    
+constraint forall( r in RadioSet where radios[r] != 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB2]] > 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB3]] > 0 )
+                 ( let { var 0..120: port_pwr,
+                         var 0..400: radio_pwr } in 
+                 ( table( [radios[r], 0, ru_data[radios[r], FB2], ru_data[radios[r], FB3],
+                           0, radio_pwr_modes[r, ru_data[radios[r], FB2]], radio_pwr_modes[r, ru_data[radios[r], FB3]], 
+                           port_pwr, radio_pwr], ru_fbs_pms_pwr ) /\
+                   sum( p in PortSet, c in CarrierSet where 
+                        carriers[c, FREQ_BAND] = ru_data[radios[r], FB2] \/ 
+                        carriers[c, FREQ_BAND] = ru_data[radios[r], FB3]) 
+                      ( carrier_tx_allocation[c, r, p] * (carriers[c, OUT_PWR]/carriers[c, NR_TX]) ) <= radio_pwr ) );
+               
+constraint forall( r in RadioSet where radios[r] != 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB1]] > 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB2]] > 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB3]] > 0 )
+                 ( let { var 0..120: port_pwr,
+                         var 0..400: radio_pwr } in 
+                 ( table( [radios[r], 
+                           ru_data[radios[r], FB1], ru_data[radios[r], FB2], ru_data[radios[r], FB3],
+                           radio_pwr_modes[r, ru_data[radios[r], FB1]], 
+                           radio_pwr_modes[r, ru_data[radios[r], FB2]], 
+                           radio_pwr_modes[r, ru_data[radios[r], FB3]], 
+                           port_pwr, radio_pwr], ru_fbs_pms_pwr ) /\
+                   sum( p in PortSet, c in CarrierSet where 
+                        carriers[c, FREQ_BAND] = ru_data[radios[r], FB1] \/ 
+                        carriers[c, FREQ_BAND] = ru_data[radios[r], FB2] \/ 
+                        carriers[c, FREQ_BAND] = ru_data[radios[r], FB3] ) 
+                      ( carrier_tx_allocation[c, r, p] * (carriers[c, OUT_PWR]/carriers[c, NR_TX]) ) <= radio_pwr ) );   
+                    
+array[RadioSet] of var int: radio_pwr;
+constraint forall( r in RadioSet where radios[r] != 0 ) 
+                 ( radio_pwr[r] = sum( c in CarrierSet, p in PortSet ) 
+                                     ( carrier_tx_allocation[c, r, p] * (carriers[c, OUT_PWR]/carriers[c, NR_TX] ) ) );
 /*---------------------------------------------------------------------------------------*/
+% check pwr restriction on each port on a radio, for each combination of frequency bands (single to triple band)  
+constraint forall( r in RadioSet, p in PortSet where radios[r] != 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB1]] > 0 )
+                 ( let { var 0..120: port_pwr,
+                         var 0..400: radio_pwr } in 
+                 ( table( [radios[r], 
+                           ru_data[radios[r], FB1], 0, 0, 
+                           radio_pwr_modes[r, ru_data[radios[r], FB1]], 0, 0, 
+                           port_pwr, radio_pwr], ru_fbs_pms_pwr ) /\
+                   sum( c in CarrierSet where carriers[c, FREQ_BAND] = ru_data[radios[r], FB1] ) 
+                      ( carrier_tx_allocation[c, r, p] * ( carriers[c, OUT_PWR] / carriers[c, NR_TX] ) ) <= port_pwr ) );
 
-solve minimize nr_selected_radios;
+constraint forall( r in RadioSet, p in PortSet where radios[r] != 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB2]] > 0 )
+                 ( let { var 0..120: port_pwr,
+                         var 0..400: radio_pwr } in 
+                 ( table( [radios[r], 
+                           0, ru_data[radios[r], FB2], 0, 
+                           0, radio_pwr_modes[r, ru_data[radios[r], FB2]], 0, 
+                           port_pwr, radio_pwr], ru_fbs_pms_pwr ) /\
+                   sum( c in CarrierSet where carriers[c, FREQ_BAND] = ru_data[radios[r], FB2] ) 
+                      ( carrier_tx_allocation[c, r, p] * ( carriers[c, OUT_PWR] / carriers[c, NR_TX] ) ) <= port_pwr ) );
+
+constraint forall( r in RadioSet, p in PortSet where radios[r] != 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB3]] > 0 )
+                 ( let { var 0..120: port_pwr,
+                         var 0..400: radio_pwr } in 
+                 ( table( [radios[r], 
+                           0, 0, ru_data[radios[r], FB3],
+                           0, 0, radio_pwr_modes[r, ru_data[radios[r], FB3]], 
+                           port_pwr, radio_pwr], ru_fbs_pms_pwr ) /\
+                   sum( c in CarrierSet where carriers[c, FREQ_BAND] = ru_data[radios[r], FB3] ) 
+                      ( carrier_tx_allocation[c, r, p] * ( carriers[c, OUT_PWR] / carriers[c, NR_TX] ) ) <= port_pwr ) );  
+
+constraint forall( r in RadioSet, p in PortSet where radios[r] != 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB1]] > 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB2]] > 0 )
+                 ( let { var 0..120: port_pwr,
+                         var 0..400: radio_pwr } in 
+                 ( table( [radios[r], ru_data[radios[r], FB1], ru_data[radios[r], FB2], 0,
+                           radio_pwr_modes[r, ru_data[radios[r], FB1]], radio_pwr_modes[r, ru_data[radios[r], FB2]], 0, 
+                           port_pwr, radio_pwr], ru_fbs_pms_pwr ) /\
+                   sum( c in CarrierSet where 
+                        carriers[c, FREQ_BAND] = ru_data[radios[r], FB1] \/ carriers[c, FREQ_BAND] = ru_data[radios[r], FB2]) 
+                      ( carrier_tx_allocation[c, r, p] * ( carriers[c, OUT_PWR] / carriers[c, NR_TX] ) ) <= port_pwr ) ); 
+                    
+constraint forall( r in RadioSet, p in PortSet where radios[r] != 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB1]] > 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB3]] > 0 )
+                 ( let { var 0..120: port_pwr,
+                         var 0..400: radio_pwr } in 
+                 ( table( [radios[r], ru_data[radios[r], FB1], 0, ru_data[radios[r], FB3],
+                           radio_pwr_modes[r, ru_data[radios[r], FB1]], 
+                           0, 
+                           radio_pwr_modes[r, ru_data[radios[r], FB3]], 
+                           port_pwr, radio_pwr], ru_fbs_pms_pwr ) /\
+                   sum( c in CarrierSet where 
+                        carriers[c, FREQ_BAND] = ru_data[radios[r], FB1] \/ 
+                        carriers[c, FREQ_BAND] = ru_data[radios[r], FB3]) 
+                      ( carrier_tx_allocation[c, r, p] * ( carriers[c, OUT_PWR] / carriers[c, NR_TX] ) ) <= port_pwr ) );
+                    
+constraint forall( r in RadioSet, p in PortSet where radios[r] != 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB2]] > 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB3]] > 0 )
+                 ( let { var 0..120: port_pwr,
+                         var 0..400: radio_pwr } in 
+                 ( table( [radios[r], 0, ru_data[radios[r], FB2], ru_data[radios[r], FB3],
+                           0, 
+                           radio_pwr_modes[r, ru_data[radios[r], FB2]], 
+                           radio_pwr_modes[r, ru_data[radios[r], FB3]], 
+                           port_pwr, radio_pwr], ru_fbs_pms_pwr ) /\
+                   sum( c in CarrierSet where 
+                        carriers[c, FREQ_BAND] = ru_data[radios[r], FB2] \/ 
+                        carriers[c, FREQ_BAND] = ru_data[radios[r], FB3]) 
+                      ( carrier_tx_allocation[c, r, p] * ( carriers[c, OUT_PWR] / carriers[c, NR_TX] ) ) <= port_pwr ) );
+               
+constraint forall( r in RadioSet, p in PortSet where radios[r] != 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB1]] > 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB2]] > 0 /\ 
+                   radio_freq_bands[r, ru_data[radios[r], FB3]] > 0 )
+                 ( let { var 0..120: port_pwr,
+                         var 0..400: radio_pwr } in 
+                 ( table( [radios[r], 
+                           ru_data[radios[r], FB1], ru_data[radios[r], FB2], ru_data[radios[r], FB3],
+                           radio_pwr_modes[r, ru_data[radios[r], FB1]], 
+                           radio_pwr_modes[r, ru_data[radios[r], FB2]], 
+                           radio_pwr_modes[r, ru_data[radios[r], FB3]], 
+                           port_pwr, radio_pwr], ru_fbs_pms_pwr ) /\
+                   sum( c in CarrierSet where 
+                        carriers[c, FREQ_BAND] = ru_data[radios[r], FB1] \/ 
+                        carriers[c, FREQ_BAND] = ru_data[radios[r], FB2] \/ 
+                        carriers[c, FREQ_BAND] = ru_data[radios[r], FB3] ) 
+                      ( carrier_tx_allocation[c, r, p] * ( carriers[c, OUT_PWR] / carriers[c, NR_TX] ) ) <= port_pwr ) ); 
+%---------------------------------------------------------------------------------------------------------------------------------------
+solve satisfy;
 
 output["swrev = \(to_enum(swr, swrev))\n",
        "nr_selected_nodes = \(nr_selected_nodes)\n",
@@ -392,15 +579,16 @@ output["swrev = \(to_enum(swr, swrev))\n",
        ["rbbs in nodes = [" ] ++
        [if fix(rbbs_in_nodes[i]) != 0 then show(rbbs_in_nodes[i]) ++ ", " else "" endif | i in NodeSet] ++ ["]\n"] ++
        ["rbbs = ["] ++ 
-       [if fix(rbbs[i]) != 0 then show(to_enum(rbb, rbbs[i])) ++ ", " else "0," endif | i in RbbSet] ++ ["]\n"] ++
+       [if fix(rbbs[i]) != 0 then show(to_enum(rbb, rbbs[i])) ++ ", " else "" endif | i in RbbSet] ++ ["]\n"] ++
        ["radios = ["] ++ 
        [if fix(radios[i]) != 0 then show(to_enum(ru, radios[i])) ++ ", " else "" endif | i in RadioSet] ++ ["]\n"] ++
        ["radio ru types = ["] ++ 
-       [if fix(radios_ru_type[i]) != 0 then show(to_enum(ru_type, radios_ru_type[i])) ++ ", " else "" endif | i in RadioSet] ++ ["]\n"] ++
+       [if fix(radios[i]) != 0 then show(to_enum(ru_type, ru_data[radios[i], RU_TYPE])) ++ ", " else "" endif | i in RadioSet] ++ ["]\n"] ++
        ["radio port patterns = [\n"] ++
        [if j = 1 then "|" else "" endif ++
         if fix(radio_port_patterns[i,j]) != 0 then show(to_enum(port_pattern, radio_port_patterns[i, j])) ++ ", " else "0, " endif ++
-        if j = max(FreqSet) then "\n" else "" endif ++ if i = max(RadioSet) /\ j = max(FreqSet) then "]" else "" endif
+        if j = max(FreqSet) then "\n" else "" endif ++ 
+        if i = max(RadioSet) /\ j = max(FreqSet) then "]" else "" endif
        | i in RadioSet, j in FreqSet] ++ ["\n"] ++  
        ["radio pwr modes = [\n"] ++
        [if j = 1 then "|" else "" endif ++
@@ -423,11 +611,36 @@ output["swrev = \(to_enum(swr, swrev))\n",
        ["radio carrier types = [\n"] ++ 
        [if j = 1 then "|" else "" endif ++ show(radio_carrier_types[i, j]) ++
         if j < max(carrier_type) then  ", " else "\n" endif | i in RadioSet, j in 1..max(carrier_type)] ++ ["]\n"] ++
-/*       ["rbb carrier rats = [\n"] ++ 
-       [if j = 1 then "|" else "" endif ++ show(rbb_carrier_rats[i, j]) ++
-        if j < max(carrier_rat) then  ", " else "\n" endif | i in RbbSet, j in 1..max(carrier_rat)] ++ ["]\n"] ++*/
        ["carrier to rbb ru alloc \n"] ++
        [if rbb = 1 /\ ru = 1 then "c\(c) = " ++ "[" else "" endif ++
         if rbb = 1 then "\n|" else "" endif ++ show(carrier_rbb_radio[c, rbb, ru]) ++ 
         if ru <= card(RadioSet) then "," else "\n" endif ++ 
-        if rbb = card(RbbSet) /\ ru = card(RadioSet) then "]\n" else "" endif | c in CarrierSet, ru in RadioSet, rbb in RbbSet];
+        if rbb = card(RbbSet) /\ ru = card(RadioSet) then "]\n" else "" endif | c in CarrierSet, ru in RadioSet, rbb in RbbSet]++ 
+       [if fix(radios[r]) != 0 then "consumed pwr on radio \(r), " ++ 
+        show(to_enum(ru, radios[r])) ++ ": " ++ 
+        show(radio_pwr[r]) ++ "\n" else "" endif | r in RadioSet];
+
+/* these two constraints are a suggestion of how to check the 
+   number of allocated ul/dl carrier branches on a radio and its ports.
+   TODO: when running -> result unsatisfiable. Investigate why, check data.
+constraint forall( r in RadioSet, fb in FB1..FB3, ctc in ctc ) %radio
+                 ( let { var 0..99: dlp, 
+                         var 0..99: ulp, 
+                         var 0..99: dlr, 
+                         var 0..99: ulr } in
+                  ( table( [radios[r], ru_data[radios[r], fb], ctc, dlp, ulp, dlr, ulr], ru_fb_ctc_data ) ) /\
+                  ( dlr > 0 -> sum( c in CarrierSet where carriers[c, FREQ_BAND] = fb, p in PortSet ) 
+                                  ( carrier_tx_allocation[c, r, p] ) < dlr ) /\
+                  ( ulr > 0 -> sum( c in CarrierSet where carriers[c, FREQ_BAND] = fb, p in PortSet ) 
+                                  ( carrier_rx_allocation[c, r, p] ) < ulr ) );
+                                                     
+constraint forall( r in RadioSet, p in PortSet, fb in FB1..FB3, ctc in ctc ) %port
+                 ( let { var 0..99: dlp, 
+                         var 0..99: ulp, 
+                         var 0..99: dlr, 
+                         var 0..99: ulr } in
+                  ( table( [radios[r], ru_data[radios[r], fb], ctc, dlp, ulp, dlr, ulr], ru_fb_ctc_data ) ) /\
+                  ( dlp > 0 -> sum( c in CarrierSet where carriers[c, FREQ_BAND] = fb ) 
+                                  ( carrier_tx_allocation[c, r, p] ) < dlp ) /\
+                  ( ulp > 0 -> sum( c in CarrierSet where carriers[c, FREQ_BAND] = fb ) 
+                                  ( carrier_rx_allocation[c, r, p] ) < ulp ) );*/  
